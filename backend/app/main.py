@@ -1,0 +1,60 @@
+"""
+SENTINEL — FastAPI application root.
+Registers all routers and wires startup/shutdown lifecycle.
+"""
+
+from __future__ import annotations
+
+import os
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.api.ingestion import router as ingestion_router
+from app.api.pipeline import router as pipeline_router
+from app.api.dashboard import router as dashboard_router
+from app.api.export import router as export_router
+from app.api.hitl import router as hitl_router
+from app.services.graph_db import close_driver
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """FastAPI lifespan: startup → yield → shutdown."""
+    # Nothing to init eagerly — Neo4j driver is lazy
+    yield
+    close_driver()
+
+
+app = FastAPI(
+    title="SENTINEL",
+    description=(
+        "AI-powered investigation support platform for child-protection digital forensics. "
+        "MVP demo — synthetic data only."
+    ),
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+# ── CORS ──────────────────────────────────────────────────────────────────
+frontend_origin = os.environ.get("FRONTEND_URL", "http://localhost:5173")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[frontend_origin, "http://localhost:3000", "http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ── Routers ────────────────────────────────────────────────────────────────
+app.include_router(ingestion_router)
+app.include_router(pipeline_router)
+app.include_router(dashboard_router)
+app.include_router(export_router)
+app.include_router(hitl_router)
+
+
+@app.get("/health")
+async def health() -> dict:
+    return {"status": "ok", "service": "SENTINEL"}
