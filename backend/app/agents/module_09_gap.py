@@ -1,59 +1,85 @@
 """
-Module 09 — Gap Detector (INTENTIONALLY BROKEN for Codex self-correction demo).
+Module 09 — Gap Detector ⭐ (LangGraph node) — core differentiator.
 
-THIS VERSION uses naive max-gap logic — it flags the single largest gap
-regardless of active hours. This is the exact bug the blueprint warns about.
+Detects ABSENCE — specifically silence that falls inside a person-pair's
+normally-active hours (Module 04 baseline).
 
-The tests in test_gap_detector.py will FAIL because:
-  - Dataset 1 overnight gap (09:00→15:00, 6h) is the same size as MSG-0028→MSG-0029
-  - But the overnight gap doesn't fall inside active hours
-  - This naive implementation cannot tell the difference
+CRITICAL algorithm invariant:
+  Do NOT flag the single largest gap.
+  Do NOT flag overnight silence by default.
+  ONLY flag a gap whose midpoint (or both endpoints) falls inside the
+  baseline active-hours window.
 
-Codex's job: diagnose the failure, replace this with baseline-relative detection.
+Proven necessary: naive max-gap on Dataset 1 flags the harmless overnight
+silence and misses the real 6-hour daytime anomaly between MSG-0028 and
+MSG-0029.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from app.agents.module_04_baseline import is_in_active_window
 from app.agents.module_08_timeline import compute_gap_seconds
 from app.services.graph_db import get_driver
 
-# BUG: hardcoded minimum — no baseline comparison at all
-_MIN_GAP_SECONDS = 3600
+# Minimum gap duration (seconds) for consideration as an anomaly candidate
+_MIN_GAP_SECONDS = 3600  # 1 hour
 
 
 def gap_detector(state: dict[str, Any]) -> dict[str, Any]:
     """
-    BROKEN: Flags the largest gap(s) regardless of whether they fall inside
-    normally-active hours. This is exactly the 'max-gap' anti-pattern.
+    LangGraph node: scan each person-pair timeline for gaps that fall
+    inside the established active-hours baseline.
 
-    Will fail test_overnight_gap_is_not_primary_anomaly because:
-    - The overnight silence in Dataset 1 is ~21,600 seconds
-    - The MSG-0028->MSG-0029 gap is also 21,600 seconds
-    - This implementation cannot distinguish between them
-    - It flags BOTH as anomalies, so the overnight gap becomes the "primary"
-      (first in the list, since it comes chronologically before the real anomaly)
+    State outputs:
+        gap_alerts: list of gap dicts with keys:
+            pair_key, before, after, gap_seconds, gap_hours,
+            midpoint_hour, flagged_as_anomaly
     """
     timelines: dict[str, list[dict]] = state.get("timelines", {})
+    baselines: dict[str, dict] = state.get("baselines", {})
 
-    # BUG: ignoring baselines entirely
     all_alerts: list[dict] = []
 
     for pair_key, messages in timelines.items():
+        baseline = baselines.get(pair_key, {})
+        active_hours: set[int] = baseline.get("active_hours", set())
+
         gaps = compute_gap_seconds(messages)
 
-        if not gaps:
-            continue
-
-        # BUG: find the single largest gap and flag it, regardless of time-of-day
-        max_gap = max(gaps, key=lambda g: g["gap_seconds"])
-
         for gap in gaps:
-            flagged = gap["gap_seconds"] >= max_gap["gap_seconds"] * 0.9  # flags all "large" gaps
+            if gap["gap_seconds"] < _MIN_GAP_SECONDS:
+                continue
 
-            before_msg = next((m for m in messages if m["message_id"] == gap["before"]), None)
-            after_msg = next((m for m in messages if m["message_id"] == gap["after"]), None)
+            # Find the messages that bound this gap to get their hours
+            before_msg = next(
+                (m for m in messages if m["message_id"] == gap["before"]), None
+            )
+            after_msg = next(
+                (m for m in messages if m["message_id"] == gap["after"]), None
+            )
+
+            if not before_msg or not after_msg:
+                continue
+
+            before_hour = before_msg["timestamp"].hour
+            after_hour = after_msg["timestamp"].hour
+
+            # Midpoint hour of the silence window
+            mid_ts = before_msg["timestamp"] + (
+                after_msg["timestamp"] - before_msg["timestamp"]
+            ) / 2
+            midpoint_hour = mid_ts.hour
+
+            # ── Baseline-relative decision ─────────────────────────────────
+            # Flag if both endpoints of the gap were in the active window,
+            # meaning the silence interrupted an active conversation.
+            both_endpoints_active = is_in_active_window(
+                before_hour, active_hours
+            ) and is_in_active_window(after_hour, active_hours)
+
+            flagged = both_endpoints_active
 
             alert = {
                 "pair_key": pair_key,
@@ -61,20 +87,25 @@ def gap_detector(state: dict[str, Any]) -> dict[str, Any]:
                 "after": gap["after"],
                 "gap_seconds": gap["gap_seconds"],
                 "gap_hours": gap["gap_seconds"] / 3600,
-                "before_hour": before_msg["timestamp"].hour if before_msg else 0,
-                "after_hour": after_msg["timestamp"].hour if after_msg else 0,
-                "midpoint_hour": 12,  # BUG: hardcoded, not computed
+                "before_hour": before_hour,
+                "after_hour": after_hour,
+                "midpoint_hour": midpoint_hour,
                 "flagged_as_anomaly": flagged,
-                "suppressed": False,
+                "suppressed": False,  # Module 11 may set this to True
                 "suppression_reason": None,
             }
             all_alerts.append(alert)
+
+            # Write TIMELINE_GAP relationship into Neo4j if flagged
+            if flagged and before_msg and after_msg:
+                _write_gap_edge(pair_key, gap)
 
     state["gap_alerts"] = all_alerts
     return state
 
 
 def _write_gap_edge(pair_key: str, gap: dict) -> None:
+    """Persist a TIMELINE_GAP edge between the two bounding Person nodes."""
     try:
         parts = pair_key.split("->")
         if len(parts) != 2:
@@ -87,8 +118,13 @@ def _write_gap_edge(pair_key: str, gap: dict) -> None:
         SET g.gap_seconds = $gap_seconds
         """
         with driver.session() as session:
-            session.run(cypher, sender=sender, receiver=receiver,
-                        before=gap["before"], after=gap["after"],
-                        gap_seconds=gap["gap_seconds"])
+            session.run(
+                cypher,
+                sender=sender,
+                receiver=receiver,
+                before=gap["before"],
+                after=gap["after"],
+                gap_seconds=gap["gap_seconds"],
+            )
     except Exception as exc:
         print(f"[WARN] Could not write gap edge: {exc}")
