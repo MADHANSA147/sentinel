@@ -12,7 +12,7 @@ services:
         sync: false
       - key: NEO4J_PASSWORD
         sync: false
-      - key: ANTHROPIC_API_KEY
+      - key: GROQ_API_KEY
         sync: false
       - key: FRONTEND_URL
         value: https://sentinel-mvp.vercel.app

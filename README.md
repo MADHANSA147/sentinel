@@ -13,7 +13,7 @@ AI-powered investigation support platform for child-protection digital forensics
 | Graph Database | Neo4j Aura (free tier) |
 | Vector Search | ChromaDB (embedded) |
 | Centrality Algorithms | networkx (PageRank + Betweenness) |
-| LLM Reasoning | Claude API (synthetic data only) |
+| LLM Reasoning | Groq API (synthetic data only) |
 | Frontend | React + D3.js (Vite) |
 | PDF Export | reportlab |
 | Backend Deploy | Render |
@@ -26,7 +26,7 @@ AI-powered investigation support platform for child-protection digital forensics
 ```powershell
 cd backend
 pip install -r requirements.txt
-copy .env.example .env   # fill in your Neo4j + Claude API keys
+copy .env.example .env   # fill in your Neo4j + Groq API keys
 uvicorn app.main:app --reload
 ```
 

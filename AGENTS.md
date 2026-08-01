@@ -3,7 +3,7 @@
 ## Project
 AI-powered investigation support platform for child-protection digital
 forensics. FastAPI + LangGraph backend, React + D3 frontend, Neo4j Aura
-graph, ChromaDB vector search, Claude API for reasoning (synthetic data only).
+graph, ChromaDB vector search, Groq API for reasoning (synthetic data only).
 
 ## Non-negotiable conventions
 - Normalize every timestamp to UTC immediately after parsing.
