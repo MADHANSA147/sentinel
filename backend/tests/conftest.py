@@ -9,6 +9,12 @@ from unittest.mock import MagicMock, patch
 # Add backend root to sys.path so imports work
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+# Mock neo4j in sys.modules so it doesn't need to be installed
+mock_neo4j = MagicMock()
+mock_neo4j.GraphDatabase = MagicMock()
+mock_neo4j.Driver = MagicMock()
+sys.modules["neo4j"] = mock_neo4j
+
 # ── Mock Neo4j driver so tests don't need a real DB ───────────────────────
 import app.services.graph_db as gdb
 

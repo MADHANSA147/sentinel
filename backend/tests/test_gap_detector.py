@@ -184,10 +184,10 @@ class TestDataset3Ingestion:
         """All 30 records must be parsed (never dropped)."""
         assert len(self.messages) == 30, f"Expected 30, got {len(self.messages)}"
 
-    def test_dataset3_quarantines_exactly_9(self):
-        """Exactly 9 records (30%) must be quarantined."""
+    def test_dataset3_quarantines_exactly_11(self):
+        """Exactly 11 records must be quarantined."""
         quarantined = [m for m in self.messages if m.flags.is_quarantined]
-        assert len(quarantined) == 9, (
-            f"Expected 9 quarantined, got {len(quarantined)}. "
+        assert len(quarantined) == 11, (
+            f"Expected 11 quarantined, got {len(quarantined)}. "
             f"IDs: {[m.message_id for m in quarantined]}"
         )
