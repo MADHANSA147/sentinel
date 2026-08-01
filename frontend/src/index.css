@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@600;700&display=swap');
+
 :root {
   --color-bg: #0a0e1a;
   --color-surface: #111827;
@@ -397,4 +399,3 @@ h3 { font-size: 1rem; font-weight: 600; }
 }
 
 /* Google Fonts */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@600;700&display=swap');
