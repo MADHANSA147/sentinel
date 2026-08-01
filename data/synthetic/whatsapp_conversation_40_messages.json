@@ -28,7 +28,7 @@
   {"message_id": "MSG-0027", "timestamp": "2026-07-26T15:18:00Z", "sender_id": "U-101", "receiver_id": "U-102", "content": "I'll send details via the other channel.", "platform": "whatsapp"},
   {"message_id": "MSG-0028", "timestamp": "2026-07-26T15:20:00Z", "sender_id": "U-102", "receiver_id": "U-101", "content": "Okay waiting.", "platform": "whatsapp"},
   {"message_id": "MSG-0029", "timestamp": "2026-07-26T21:20:00Z", "sender_id": "U-101", "receiver_id": "U-102", "content": "Resuming — details confirmed.", "platform": "whatsapp"},
-  {"message_id": "MSG-0030", "timestamp": "2026-07-26T21:22:00Z", "sender_id": "U-102", "receiver_id": "U-101", "content": "Got it.", "platform": "whatsapp"},
+  {"message_id": "MSG-0030", "timestamp": "2026-07-26T21:22:00Z", "sender_id": "U-102", "receiver_id": "U-101", "content": "Acknowledged, details received.", "platform": "whatsapp"},
   {"message_id": "MSG-0031", "timestamp": "2026-07-26T21:25:00Z", "sender_id": "U-101", "receiver_id": "U-102", "content": "Final confirmation received from the top.", "platform": "whatsapp"},
   {"message_id": "MSG-0032", "timestamp": "2026-07-26T21:27:30Z", "sender_id": "U-102", "receiver_id": "U-101", "content": "All set.", "platform": "whatsapp"},
   {"message_id": "MSG-0033", "timestamp": "2026-07-26T21:30:00Z", "sender_id": "U-101", "receiver_id": "U-102", "content": "Keep this channel clear from now.", "platform": "whatsapp"},

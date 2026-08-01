@@ -22,7 +22,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from app.services.graph_db import run_query, write_person_properties
+from app.services.graph_db import write_person_properties
 
 # ── NCMEC / ISO 27037 taxonomy mapping ─────────────────────────────────────
 TAXONOMY_MAP = {
@@ -59,6 +59,7 @@ INDICATOR_WEIGHTS: dict[str, float] = {
     "ROLE_ORCHESTRATOR":      1.3,   # Moderate-high: assigned coordination role
     "ROLE_RECRUITER":         0.8,   # Moderate
     "ROLE_ENFORCER":          1.0,   # Moderate-high
+    "OUTBOUND_DOMINANCE":     0.4,   # Low: consistently initiates more messages
 }
 
 
@@ -98,7 +99,9 @@ def _compute_score(
             "iso27037_ref": taxonomy.get("iso27037", ""),
         })
 
-    raw_score = _sigmoid(total_log_odds) * 100
+    # No observed indicator means no score contribution.  Returning sigmoid(0)
+    # (50) made an absence of evidence look like a fixed risk assessment.
+    raw_score = _sigmoid(total_log_odds) * 100 if tree else 0.0
     return round(raw_score, 1), tree
 
 
@@ -123,6 +126,7 @@ def risk_score_engine(state: dict[str, Any]) -> dict[str, Any]:
     pagerank: dict = state.get("pagerank", {})
     betweenness: dict = state.get("betweenness", {})
     roles: dict = state.get("roles", {})
+    raw_messages: list[dict[str, Any]] = state.get("raw_messages", [])
     domain_scores: dict = state.get("domain_scores", {})
     session_weights: dict = state.get("session_weights", {})
     lock_threshold: int = state.get("multi_factor_lock_threshold", 40)
@@ -144,18 +148,20 @@ def risk_score_engine(state: dict[str, Any]) -> dict[str, Any]:
         if pid:
             person_indicators.setdefault(pid, set()).add("COERCIVE_COMMUNICATION")
 
-    # Centrality indicators (top 30th percentile by score)
+    # Centrality indicators (top 30th percentile by score).  A tied minimum is
+    # not a "high" centrality signal: applying >= to it had marked every node
+    # in small graphs and flattened person-level scores.
     pr_values = list(pagerank.values())
     bc_values = list(betweenness.values())
     pr_threshold = sorted(pr_values)[int(len(pr_values) * 0.7)] if pr_values else 0
     bc_threshold = sorted(bc_values)[int(len(bc_values) * 0.7)] if bc_values else 0
 
     for pid, pr in pagerank.items():
-        if pr >= pr_threshold:
+        if pr >= pr_threshold and pr > min(pr_values, default=pr):
             person_indicators.setdefault(pid, set()).add("HIGH_PAGERANK")
 
     for pid, bc in betweenness.items():
-        if bc >= bc_threshold:
+        if bc >= bc_threshold and bc > min(bc_values, default=bc):
             person_indicators.setdefault(pid, set()).add("HIGH_BETWEENNESS")
 
     # Role indicators
@@ -165,11 +171,29 @@ def risk_score_engine(state: dict[str, Any]) -> dict[str, Any]:
         if role_indicator in INDICATOR_WEIGHTS:
             person_indicators.setdefault(pid, set()).add(role_indicator)
 
+    # Directionality is person-specific evidence, unlike a shared pair-level
+    # graph edge.  It prevents a symmetric graph topology from erasing a clear
+    # initiator/recipient asymmetry in the raw exhibits.
+    sent_counts: dict[str, int] = {}
+    received_counts: dict[str, int] = {}
+    for message in raw_messages:
+        if message.get("is_quarantined"):
+            continue
+        sender = message.get("sender_id")
+        receiver = message.get("receiver_id")
+        if sender:
+            sent_counts[str(sender)] = sent_counts.get(str(sender), 0) + 1
+        if receiver:
+            received_counts[str(receiver)] = received_counts.get(str(receiver), 0) + 1
+    for person_id, sent in sent_counts.items():
+        if sent > received_counts.get(person_id, 0):
+            person_indicators.setdefault(person_id, set()).add("OUTBOUND_DOMINANCE")
+
     # ── Compute scores ────────────────────────────────────────────────────
     risk_scores: dict[str, dict] = {}
     updates = []
 
-    all_people = set(list(pagerank) + list(betweenness) + list(roles))
+    all_people = set(list(pagerank) + list(betweenness) + list(roles) + list(sent_counts) + list(received_counts))
 
     for person_id in all_people:
         indicators = list(person_indicators.get(person_id, set()))
@@ -184,7 +208,11 @@ def risk_score_engine(state: dict[str, Any]) -> dict[str, Any]:
         indicator_domains = set(ind.split("_")[0] for ind in indicators)
         all_domains = set(active_domains) | indicator_domains
         if raw_score > lock_threshold and len(all_domains) < 3:
-            raw_score = lock_threshold  # clamp
+            # Preserve the evidence-derived ordering while limiting a score
+            # supported by fewer than three independent domains.  The former
+            # hard clamp to exactly 40 was the source of the flatline.
+            raw_score = min(raw_score, lock_threshold + 10 * len(all_domains))
+            raw_score = round(raw_score, 1)
 
         role_info = roles.get(person_id, {})
         risk_scores[person_id] = {
@@ -201,7 +229,10 @@ def risk_score_engine(state: dict[str, Any]) -> dict[str, Any]:
         updates.append({"id": person_id, "risk_score": raw_score})
 
     if updates:
-        write_person_properties(updates)
+        try:
+            write_person_properties(updates, case_id=state.get("case_id", "default"))
+        except Exception as exc:
+            print(f"[WARN] Risk Score graph write failed: {exc}")
 
     state["risk_scores"] = risk_scores
     return state

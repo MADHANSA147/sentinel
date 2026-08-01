@@ -8,7 +8,20 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.services.graph_db import get_driver, run_query
+from app.services.graph_db import get_driver, run_query_for_case
+
+
+def _person_ids_from_raw_messages(raw_messages: list[dict[str, Any]]) -> list[str]:
+    """Collect Person IDs from raw pipeline state."""
+    person_ids: set[str] = set()
+    for msg in raw_messages:
+        sender = msg.get("sender_id")
+        receiver = msg.get("receiver_id")
+        if sender:
+            person_ids.add(str(sender))
+        if receiver:
+            person_ids.add(str(receiver))
+    return sorted(person_ids)
 
 
 def identity_fusion(state: dict[str, Any]) -> dict[str, Any]:
@@ -19,11 +32,21 @@ def identity_fusion(state: dict[str, Any]) -> dict[str, Any]:
 
     Returns updated state with 'person_nodes' list.
     """
-    driver = get_driver()
+    case_id: str = state.get("case_id", "default")
+    raw_messages: list[dict[str, Any]] = state.get("raw_messages", [])
 
-    # Collect all IDs that appear in MESSAGED edges
-    records = run_query("MATCH (p:Person) RETURN p.id AS id")
-    person_ids: list[str] = [r["id"] for r in records if r.get("id")]
+    if raw_messages:
+        person_ids = _person_ids_from_raw_messages(raw_messages)
+    else:
+        try:
+            records = run_query_for_case(
+                case_id,
+                "MATCH (p:Person {case_id: $case_id}) RETURN p.id AS id",
+            )
+            person_ids = [r["id"] for r in records if r.get("id")]
+        except Exception as exc:
+            print(f"[WARN] Identity Fusion graph query failed: {exc}")
+            person_ids = []
 
     # Simple alias grouping: treat tokens that share a non-empty prefix as
     # the same person.  For the MVP (purely numeric IDs like U-101) this
@@ -38,11 +61,15 @@ def identity_fusion(state: dict[str, Any]) -> dict[str, Any]:
     if updates:
         cypher = """
         UNWIND $updates AS u
-        MATCH (p:Person {id: u.id})
+        MATCH (p:Person {id: u.id, case_id: $case_id})
         SET p.canonical_id = u.canonical_id
         """
-        with driver.session() as session:
-            session.run(cypher, updates=updates)
+        try:
+            driver = get_driver()
+            with driver.session() as session:
+                session.run(cypher, updates=updates, case_id=case_id)
+        except Exception as exc:
+            print(f"[WARN] Identity Fusion graph write failed: {exc}")
 
     state["person_nodes"] = person_ids
     state["canonical_map"] = canonical_map

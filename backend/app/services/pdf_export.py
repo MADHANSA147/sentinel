@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+from html import escape
 from datetime import datetime, timezone
 from typing import Any
 
@@ -32,6 +33,14 @@ from reportlab.platypus import (
 def _hash_message_content(content: str) -> str:
     """SHA-256 of message content for exhibit integrity."""
     return hashlib.sha256(content.encode()).hexdigest()[:16] + "..."
+
+
+def _content_excerpt(content: str, limit: int = 180) -> str:
+    """Return a readable, safely escaped exhibit excerpt without altering evidence."""
+    normalized = " ".join(content.split())
+    if len(normalized) > limit:
+        normalized = normalized[: limit - 1].rstrip() + "…"
+    return escape(normalized) or "[No readable content supplied]"
 
 
 def generate_court_pack(
@@ -120,7 +129,10 @@ def generate_court_pack(
     )
     story.append(Spacer(1, 0.3 * cm))
 
-    table_data = [["#", "Message ID", "Timestamp (UTC)", "Sender", "Platform", "Content Hash"]]
+    table_data = [[
+        "#", "Message ID", "Timestamp (UTC)", "Sender", "Platform",
+        "Readable content excerpt", "Content Hash",
+    ]]
     for idx, msg in enumerate(messages, 1):
         content = msg.get("content") or ""
         ts = msg.get("timestamp")
@@ -131,6 +143,7 @@ def generate_court_pack(
             ts_str,
             msg.get("sender_id") or "UNKNOWN",
             msg.get("platform", ""),
+            Paragraph(_content_excerpt(content), caveat_style),
             _hash_message_content(content) if content else "NULL",
         ])
 

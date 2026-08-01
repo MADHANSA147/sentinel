@@ -14,11 +14,31 @@ Expected outcome against network_test_45_messages.json:
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any
 
 import networkx as nx
 
-from app.services.graph_db import run_query, write_person_properties
+from app.services.graph_db import run_query_for_case, write_person_properties
+
+
+def _edge_records_from_raw_messages(
+    raw_messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Aggregate directed sender->receiver counts from raw pipeline state."""
+    counts: Counter[tuple[str, str]] = Counter()
+    for msg in raw_messages:
+        if msg.get("is_quarantined"):
+            continue
+        sender = msg.get("sender_id")
+        receiver = msg.get("receiver_id")
+        if sender and receiver:
+            counts[(str(sender), str(receiver))] += 1
+
+    return [
+        {"sender": sender, "receiver": receiver, "weight": weight}
+        for (sender, receiver), weight in counts.items()
+    ]
 
 
 def network_mapping(state: dict[str, Any]) -> dict[str, Any]:
@@ -30,13 +50,26 @@ def network_mapping(state: dict[str, Any]) -> dict[str, Any]:
         betweenness: dict[person_id -> float]
         centrality_summary: list of dicts for easy display
     """
-    # ── Fetch all MESSAGED edges from Neo4j ────────────────────────────────
-    records = run_query(
-        """
-        MATCH (s:Person)-[r:MESSAGED]->(t:Person)
-        RETURN s.id AS sender, t.id AS receiver
-        """
-    )
+    case_id: str = state.get("case_id", "default")
+    raw_messages: list[dict[str, Any]] = state.get("raw_messages", [])
+
+    if raw_messages:
+        records = _edge_records_from_raw_messages(raw_messages)
+    else:
+        try:
+            # ── Fetch MESSAGED edges scoped to this case ─────────────────────
+            records = run_query_for_case(
+                case_id,
+                """
+                MATCH (s:Person {case_id: $case_id})-[r:MESSAGED]->(t:Person {case_id: $case_id})
+                RETURN s.id AS sender,
+                       t.id AS receiver,
+                       coalesce(r.message_count, 1) AS weight
+                """,
+            )
+        except Exception as exc:
+            print(f"[WARN] Network Mapping graph query failed: {exc}")
+            records = []
 
     if not records:
         state["pagerank"] = {}
@@ -48,13 +81,19 @@ def network_mapping(state: dict[str, Any]) -> dict[str, Any]:
     G = nx.DiGraph()
     for rec in records:
         if rec["sender"] and rec["receiver"]:
-            # Each duplicate edge (multiple messages same pair) adds weight
+            weight = int(rec.get("weight") or 1)
             if G.has_edge(rec["sender"], rec["receiver"]):
-                G[rec["sender"]][rec["receiver"]]["weight"] += 1
+                G[rec["sender"]][rec["receiver"]]["weight"] += weight
             else:
-                G.add_edge(rec["sender"], rec["receiver"], weight=1)
+                G.add_edge(rec["sender"], rec["receiver"], weight=weight)
 
     # ── Compute metrics ───────────────────────────────────────────────────
+    if G.number_of_nodes() == 0:
+        state["pagerank"] = {}
+        state["betweenness"] = {}
+        state["centrality_summary"] = []
+        return state
+
     pagerank: dict[str, float] = nx.pagerank(G, alpha=0.85, weight="weight")
     # Betweenness on undirected projection catches bridge role better
     G_undirected = G.to_undirected()
@@ -62,7 +101,7 @@ def network_mapping(state: dict[str, Any]) -> dict[str, Any]:
         G_undirected, normalized=True, weight="weight"
     )
 
-    # ── Write scores back to Neo4j Person nodes ───────────────────────────
+    # ── Write scores back to Neo4j Person nodes ───────────────────────────────
     updates = [
         {
             "id": node,
@@ -71,7 +110,10 @@ def network_mapping(state: dict[str, Any]) -> dict[str, Any]:
         }
         for node in set(list(pagerank) + list(betweenness))
     ]
-    write_person_properties(updates)
+    try:
+        write_person_properties(updates, case_id=case_id)
+    except Exception as exc:
+        print(f"[WARN] Network Mapping graph write failed: {exc}")
 
     # ── Build summary for state ───────────────────────────────────────────
     summary = sorted(

@@ -21,6 +21,26 @@ from app.agents.module_11_context import exculpatory_context
 from app.agents.module_12_risk import risk_score_engine
 from app.agents.module_10_simulation import case_simulation
 from app.agents.module_13_feedback import feedback_loop
+from app.services.ledger import log_step
+
+
+def _ledger_wrapped(module_name: str, node: Any) -> Any:
+    """Record one auditable entry for every LangGraph module invocation."""
+    def invoke(state: dict[str, Any]) -> dict[str, Any]:
+        result = node(state)
+        log_step(
+            case_id=str(result.get("case_id", state.get("case_id", "default"))),
+            module_name=module_name,
+            input_summary=(
+                f"State keys: {', '.join(sorted(state.keys())) or 'none'}"
+            ),
+            output_summary=(
+                f"State keys: {', '.join(sorted(result.keys())) or 'none'}"
+            ),
+            raw_file_hash=result.get("ingestion_hash", state.get("ingestion_hash")),
+        )
+        return result
+    return invoke
 
 
 def build_pipeline() -> Any:
@@ -29,18 +49,18 @@ def build_pipeline() -> Any:
     graph = StateGraph(dict)
 
     # ── Register nodes ─────────────────────────────────────────────────────
-    graph.add_node("identity_fusion",    identity_fusion)
-    graph.add_node("timeline_engine",    timeline_engine)
-    graph.add_node("behavioral_print",   behavioral_print)
-    graph.add_node("network_mapping",    network_mapping)
-    graph.add_node("subject_profiling",  subject_profiling)
-    graph.add_node("role_discovery",     role_discovery)
-    graph.add_node("word_patterns",      word_patterns)
-    graph.add_node("gap_detector",       gap_detector)
-    graph.add_node("exculpatory_context", exculpatory_context)
-    graph.add_node("risk_score_engine",  risk_score_engine)
-    graph.add_node("case_simulation",    case_simulation)
-    graph.add_node("feedback_loop",      feedback_loop)
+    graph.add_node("identity_fusion", _ledger_wrapped("Module 02 — Identity Fusion", identity_fusion))
+    graph.add_node("timeline_engine", _ledger_wrapped("Module 08 — Timeline Engine", timeline_engine))
+    graph.add_node("behavioral_print", _ledger_wrapped("Module 04 — Behavioral Print", behavioral_print))
+    graph.add_node("network_mapping", _ledger_wrapped("Module 06 — Network Mapping", network_mapping))
+    graph.add_node("subject_profiling", _ledger_wrapped("Module 03 — Subject Profiling", subject_profiling))
+    graph.add_node("role_discovery", _ledger_wrapped("Module 07 — Role Discovery", role_discovery))
+    graph.add_node("word_patterns", _ledger_wrapped("Module 05 — Word Patterns", word_patterns))
+    graph.add_node("gap_detector", _ledger_wrapped("Module 09 — Gap Detector", gap_detector))
+    graph.add_node("exculpatory_context", _ledger_wrapped("Module 11 — Exculpatory Context", exculpatory_context))
+    graph.add_node("risk_score_engine", _ledger_wrapped("Module 12 — Risk Score", risk_score_engine))
+    graph.add_node("case_simulation", _ledger_wrapped("Module 10 — Case Simulation", case_simulation))
+    graph.add_node("feedback_loop", _ledger_wrapped("Module 13 — Feedback", feedback_loop))
 
     # ── Define execution order ─────────────────────────────────────────────
     graph.set_entry_point("identity_fusion")

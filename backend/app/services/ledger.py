@@ -19,6 +19,11 @@ from typing import Any
 _ledger: dict[str, list[dict]] = {}
 
 
+def clear_ledger(case_id: str) -> None:
+    """Start a fresh, case-specific execution chain for a new pipeline run."""
+    _ledger.pop(case_id, None)
+
+
 def _hash_entry(entry: dict) -> str:
     """SHA-256 hash of an entry's canonical JSON representation."""
     canonical = json.dumps(entry, sort_keys=True, default=str)

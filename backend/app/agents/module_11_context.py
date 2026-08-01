@@ -15,7 +15,7 @@ hours before the burst — a 48-hour window misses it entirely.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.agents.module_05_words import get_collection
@@ -26,15 +26,54 @@ _INNOCENT_PATTERNS = [
     "no signal", "sleeping", "offline", "hospital", "emergency",
     "meeting", "out of town", "battery dead", "network issue",
 ]
+# A direct lexical finding must be specific enough to clear an alert.  Generic
+# words such as "meeting" or "offline" occur in potentially coercive messages
+# and are only retrieval hints, not independently exculpatory evidence.
+_EXPLICIT_INNOCENT_PATTERNS = [
+    "night shift", "working late", "travel", "no signal", "hospital",
+    "emergency", "out of town", "battery dead", "network issue",
+]
 
 _LOOKBACK_HOURS = 72  # proven necessary from Dataset 2 (context ~52h before burst)
 _MULTI_DOMAIN_LOCK_THRESHOLD = 40  # score cap without 3+ evidence domains
+
+
+def _to_utc_datetime(value: Any) -> datetime | None:
+    """Parse timestamp metadata and normalize it to UTC."""
+    if value is None:
+        return None
+    try:
+        if isinstance(value, str):
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(
+                timezone.utc
+            )
+        if hasattr(value, "to_native"):
+            return value.to_native().astimezone(timezone.utc)
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                return value.replace(tzinfo=timezone.utc)
+            return value.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return None
+    return None
+
+
+def _metadata_matches_pair(meta: dict[str, Any], pair_key: str) -> bool:
+    """Return True when metadata belongs to either direction of the pair."""
+    if "->" not in pair_key:
+        return False
+
+    left, right = pair_key.split("->", 1)
+    sender = meta.get("sender_id")
+    receiver = meta.get("receiver_id")
+    return {sender, receiver} == {left, right}
 
 
 def _check_for_innocent_context(
     pair_key: str,
     gap_start_ts: Any,
     collection: Any,
+    case_id: str = "default",
 ) -> tuple[bool, str | None]:
     """
     Search ChromaDB within the 72-hour lookback window for messages that
@@ -43,9 +82,12 @@ def _check_for_innocent_context(
     Returns (is_benign, explanation_text)
     """
     try:
+        gap_start = _to_utc_datetime(gap_start_ts)
+        if gap_start is None:
+            return False, None
+
         # Build time-bounded query
-        window_start = gap_start_ts - timedelta(hours=_LOOKBACK_HOURS)
-        window_start_iso = window_start.isoformat() if hasattr(window_start, "isoformat") else str(window_start)
+        window_start = gap_start - timedelta(hours=_LOOKBACK_HOURS)
 
         # Query using innocent explanation patterns as query text
         innocent_query = " ".join(_INNOCENT_PATTERNS[:5])
@@ -53,6 +95,7 @@ def _check_for_innocent_context(
             query_texts=[innocent_query],
             n_results=10,
             include=["documents", "metadatas", "distances"],
+            where={"case_id": case_id},
         )
 
         if not results["ids"] or not results["ids"][0]:
@@ -63,7 +106,12 @@ def _check_for_innocent_context(
             distance = results["distances"][0][idx]
             similarity = 1.0 - min(distance / 2.0, 1.0)
             meta = results["metadatas"][0][idx]
-            ts_str = meta.get("timestamp", "")
+            msg_ts = _to_utc_datetime(meta.get("timestamp"))
+
+            if msg_ts is None or not window_start <= msg_ts <= gap_start:
+                continue
+            if not _metadata_matches_pair(meta, pair_key):
+                continue
 
             # Semantic match check
             if similarity > 0.60:
@@ -72,10 +120,43 @@ def _check_for_innocent_context(
                     return True, doc
 
         return False, None
-
     except Exception as exc:
         print(f"[WARN] Exculpatory context query failed: {exc}")
         return False, None
+
+
+def _find_innocent_context_in_state(
+    raw_messages: list[dict[str, Any]],
+    pair_key: str,
+    gap_start_ts: Any,
+) -> tuple[bool, str | None]:
+    """Find explicit benign context in the case data without vector-service drift.
+
+    Chroma is an optional retrieval accelerator, not the authority for an
+    exculpatory finding.  Looking at the original, already UTC-normalised case
+    records guarantees that a clear statement (such as Dataset 2's night-shift
+    notice) is retained even if the vector service is unavailable.
+    """
+    gap_start = _to_utc_datetime(gap_start_ts)
+    if gap_start is None:
+        return False, None
+
+    window_start = gap_start - timedelta(hours=_LOOKBACK_HOURS)
+    for message in raw_messages:
+        if message.get("is_quarantined") or not _metadata_matches_pair(message, pair_key):
+            continue
+        timestamp = _to_utc_datetime(message.get("timestamp"))
+        content = str(message.get("content") or "")
+        if (
+            timestamp is not None
+            and window_start <= timestamp <= gap_start
+            and any(
+                pattern in content.lower()
+                for pattern in _EXPLICIT_INNOCENT_PATTERNS
+            )
+        ):
+            return True, content
+    return False, None
 
 
 def exculpatory_context(state: dict[str, Any]) -> dict[str, Any]:
@@ -91,7 +172,13 @@ def exculpatory_context(state: dict[str, Any]) -> dict[str, Any]:
     """
     gap_alerts: list[dict] = state.get("gap_alerts", [])
     timelines: dict = state.get("timelines", {})
-    col = get_collection()
+    raw_messages: list[dict[str, Any]] = state.get("raw_messages", [])
+    case_id = str(state.get("case_id", "default"))
+    try:
+        col = get_collection()
+    except Exception as exc:
+        print(f"[WARN] Exculpatory context unavailable: {exc}")
+        col = None
 
     domain_scores: dict[str, list[str]] = {}
 
@@ -111,9 +198,13 @@ def exculpatory_context(state: dict[str, Any]) -> dict[str, Any]:
 
         gap_start_ts = before_msg["timestamp"]
 
-        is_benign, explanation = _check_for_innocent_context(
-            pair_key, gap_start_ts, col
+        is_benign, explanation = _find_innocent_context_in_state(
+            raw_messages, pair_key, gap_start_ts
         )
+        if not is_benign and col is not None:
+            is_benign, explanation = _check_for_innocent_context(
+                pair_key, gap_start_ts, col, case_id=case_id
+            )
 
         if is_benign:
             alert["suppressed"] = True

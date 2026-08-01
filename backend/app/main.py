@@ -9,7 +9,9 @@ import os
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
-load_dotenv()
+# The project .env is the explicit backend configuration.  Override inherited
+# shell values so a rotated key is not silently shadowed by a stale process env.
+load_dotenv(override=True)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -44,7 +46,15 @@ app = FastAPI(
 frontend_origin = os.environ.get("FRONTEND_URL", "http://localhost:5173")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[frontend_origin, "http://localhost:3000", "http://localhost:5173"],
+    # Vite may be opened through either hostname during local development.
+    # These are distinct browser origins, so both must be explicitly allowed.
+    allow_origins=[
+        frontend_origin,
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

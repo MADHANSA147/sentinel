@@ -29,7 +29,7 @@
   {"message_id": "MSG-4028", "timestamp": "2026-07-25T08:02:00Z", "sender_id": "U-302", "receiver_id": "U-301", "content": "Ready.", "platform": "whatsapp"},
   {"message_id": "MSG-4029", "timestamp": "2026-07-25T08:05:00Z", "sender_id": "U-303", "receiver_id": "U-301", "content": "Here.", "platform": "whatsapp"},
   {"message_id": "MSG-4030", "timestamp": "2026-07-25T08:07:00Z", "sender_id": "U-304", "receiver_id": "U-301", "content": "Bridge check.", "platform": "whatsapp"},
-  {"message_id": "MSG-4031", "timestamp": "2026-07-25T08:09:00Z", "sender_id": "U-301", "receiver_id": "U-304", "content": "Confirmed.", "platform": "whatsapp"},
+  {"message_id": "MSG-4031", "timestamp": "2026-07-25T08:09:00Z", "sender_id": "U-301", "receiver_id": "U-304", "content": "Confirmed on the bridge check.", "platform": "whatsapp"},
   {"message_id": "MSG-4032", "timestamp": "2026-07-25T08:12:00Z", "sender_id": "U-304", "receiver_id": "U-305", "content": "A is up. B status?", "platform": "whatsapp"},
   {"message_id": "MSG-4033", "timestamp": "2026-07-25T08:14:00Z", "sender_id": "U-305", "receiver_id": "U-304", "content": "B is up.", "platform": "whatsapp"},
   {"message_id": "MSG-4034", "timestamp": "2026-07-25T08:17:00Z", "sender_id": "U-305", "receiver_id": "U-306", "content": "All systems.", "platform": "whatsapp"},
@@ -41,7 +41,7 @@
   {"message_id": "MSG-4040", "timestamp": "2026-07-25T09:10:00Z", "sender_id": "U-305", "receiver_id": "U-306", "content": "Execute.", "platform": "whatsapp"},
   {"message_id": "MSG-4041", "timestamp": "2026-07-25T09:12:00Z", "sender_id": "U-306", "receiver_id": "U-305", "content": "Done.", "platform": "whatsapp"},
   {"message_id": "MSG-4042", "timestamp": "2026-07-25T09:15:00Z", "sender_id": "U-301", "receiver_id": "U-302", "content": "Wrapping up.", "platform": "whatsapp"},
-  {"message_id": "MSG-4043", "timestamp": "2026-07-25T09:17:00Z", "sender_id": "U-302", "receiver_id": "U-301", "content": "Same.", "platform": "whatsapp"},
-  {"message_id": "MSG-4044", "timestamp": "2026-07-25T09:20:00Z", "sender_id": "U-303", "receiver_id": "U-302", "content": "All clear.", "platform": "whatsapp"},
+  {"message_id": "MSG-4043", "timestamp": "2026-07-25T09:17:00Z", "sender_id": "U-302", "receiver_id": "U-301", "content": "Our side is also wrapped up.", "platform": "whatsapp"},
+  {"message_id": "MSG-4044", "timestamp": "2026-07-25T09:20:00Z", "sender_id": "U-303", "receiver_id": "U-302", "content": "All clear for the handoff.", "platform": "whatsapp"},
   {"message_id": "MSG-4045", "timestamp": "2026-07-25T09:22:00Z", "sender_id": "U-305", "receiver_id": "U-304", "content": "Cluster B complete. Relay.", "platform": "whatsapp"}
 ]
