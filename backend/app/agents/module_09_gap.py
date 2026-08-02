@@ -22,7 +22,7 @@ from typing import Any
 
 from app.agents.module_04_baseline import is_in_active_window
 from app.agents.module_08_timeline import compute_gap_seconds
-from app.services.graph_db import get_driver
+from app.services.graph_db import run_write
 
 # Minimum gap duration (seconds) for consideration as an anomaly candidate
 _MIN_GAP_SECONDS = 3 * 3600  # 3 hours; Dataset 4 has routine 1-2h pauses.
@@ -232,7 +232,6 @@ def _write_gap_edge(case_id: str, pair_key: str, gap: dict[str, Any]) -> None:
         if len(parts) != 2:
             return
         sender, receiver = parts
-        driver = get_driver()
         cypher = """
         MATCH (s:Person {id: $sender, case_id: $case_id}),
               (r:Person {id: $receiver, case_id: $case_id})
@@ -240,15 +239,16 @@ def _write_gap_edge(case_id: str, pair_key: str, gap: dict[str, Any]) -> None:
         SET g.gap_seconds = $gap_seconds,
             g.case_id = $case_id
         """
-        with driver.session() as session:
-            session.run(
-                cypher,
-                case_id=case_id,
-                sender=sender,
-                receiver=receiver,
-                before=gap["before"],
-                after=gap["after"],
-                gap_seconds=gap["gap_seconds"],
-            )
+        run_write(
+            cypher,
+            {
+                "case_id": case_id,
+                "sender": sender,
+                "receiver": receiver,
+                "before": gap["before"],
+                "after": gap["after"],
+                "gap_seconds": gap["gap_seconds"],
+            },
+        )
     except Exception as exc:
         print(f"[WARN] Could not write gap edge: {exc}")

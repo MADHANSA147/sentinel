@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.services.graph_db import get_driver, run_query_for_case
+from app.services.graph_db import run_query_for_case, write_person_properties
 
 
 def _person_ids_from_raw_messages(raw_messages: list[dict[str, Any]]) -> list[str]:
@@ -56,18 +56,11 @@ def identity_fusion(state: dict[str, Any]) -> dict[str, Any]:
     for pid in sorted(person_ids):
         canonical_map[pid] = pid  # extend here for real-world alias resolution
 
-    # Write canonical_id property onto every Person node in one batch
+    # Write canonical_id property onto every Person node in one bounded batch.
     updates = [{"id": pid, "canonical_id": cid} for pid, cid in canonical_map.items()]
     if updates:
-        cypher = """
-        UNWIND $updates AS u
-        MATCH (p:Person {id: u.id, case_id: $case_id})
-        SET p.canonical_id = u.canonical_id
-        """
         try:
-            driver = get_driver()
-            with driver.session() as session:
-                session.run(cypher, updates=updates, case_id=case_id)
+            write_person_properties(updates, case_id=case_id)
         except Exception as exc:
             print(f"[WARN] Identity Fusion graph write failed: {exc}")
 

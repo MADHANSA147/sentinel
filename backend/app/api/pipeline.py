@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +17,7 @@ from app.services.graph_db import batch_load_graph
 from app.agents.module_05_words import embed_messages
 
 router = APIRouter(prefix="/api/v1", tags=["pipeline"])
+logger = logging.getLogger(__name__)
 
 # In-memory case state (keyed by case_id)
 _case_states: dict[str, dict] = {}
@@ -178,6 +181,16 @@ def _auto_ingest(case_id: str) -> dict[str, Any]:
 @router.post("/run/{case_id}")
 async def run_case(case_id: str) -> dict:
     """Trigger the full agent pipeline for a given case_id."""
+    logger.info("Pipeline request started for case_id=%s", case_id)
+    try:
+        return await asyncio.to_thread(_run_case_sync, case_id)
+    except Exception:
+        logger.exception("Pipeline request failed for case_id=%s", case_id)
+        raise
+
+
+def _run_case_sync(case_id: str) -> dict:
+    """Execute blocking pipeline work off FastAPI's event-loop thread."""
     # Clear stale state to ensure fresh results per dataset
     _case_states.pop(case_id, None)
     clear_ledger(case_id)
@@ -191,7 +204,7 @@ async def run_case(case_id: str) -> dict:
     state = run_pipeline(initial_state)
     _case_states[case_id] = state
 
-    return {
+    response = {
         "case_id": case_id,
         "status": "completed",
         "persons_analysed": len(state.get("risk_scores", {})),
@@ -201,6 +214,8 @@ async def run_case(case_id: str) -> dict:
         "theories": state.get("theories", []),
         "simulation": state.get("simulation", {}),
     }
+    logger.info("Pipeline request completed for case_id=%s", case_id)
+    return response
 
 
 def get_case_state(case_id: str) -> dict:

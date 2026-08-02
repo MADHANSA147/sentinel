@@ -171,6 +171,8 @@ def case_simulation(state: dict[str, Any]) -> dict[str, Any]:
             client = openai.OpenAI(
                 api_key=api_key,
                 base_url="https://api.groq.com/openai/v1",
+                timeout=5.0,
+                max_retries=0,
             )
             resp = client.chat.completions.create(
                 model=os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile"),

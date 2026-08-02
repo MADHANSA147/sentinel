@@ -8,6 +8,7 @@ from typing import Any
 
 from app.agents import module_05_words, module_11_context
 from app.api import pipeline as pipeline_api
+from app.services import graph_db
 from app.services.graph_db import _aggregate_message_edges
 
 
@@ -26,6 +27,7 @@ class FakeCollection:
 def test_word_patterns_filters_queries_by_case_id(
     monkeypatch,
 ) -> None:
+    monkeypatch.setenv("ENABLE_SEMANTIC_EMBEDDINGS", "true")
     fake = FakeCollection(
         {
             "ids": [["case-a:MSG-1"]],
@@ -42,6 +44,42 @@ def test_word_patterns_filters_queries_by_case_id(
     assert all(call["where"] == {"case_id": "case-a"} for call in fake.calls)
     assert state["coercive_matches"]
     assert {match["message_id"] for match in state["coercive_matches"]} == {"MSG-1"}
+
+
+def test_word_patterns_uses_lightweight_fallback_when_embeddings_disabled(
+    monkeypatch,
+) -> None:
+    """Render's default path must not initialise SentenceTransformer per request."""
+    monkeypatch.delenv("ENABLE_SEMANTIC_EMBEDDINGS", raising=False)
+    monkeypatch.setattr(
+        module_05_words,
+        "_get_chroma_collection",
+        lambda: pytest.fail("embedding backend must not be constructed"),
+    )
+
+    state = module_05_words.word_patterns(
+        {
+            "case_id": "case-a",
+            "raw_messages": [
+                {
+                    "message_id": "MSG-1",
+                    "sender_id": "U-1",
+                    "content": "Don't tell anyone about this.",
+                    "is_quarantined": False,
+                }
+            ],
+        }
+    )
+
+    assert state["coercive_matches"] == [
+        {
+            "query": "explicit coercive-language rule",
+            "message_id": "MSG-1",
+            "content": "Don't tell anyone about this.",
+            "sender_id": "U-1",
+            "similarity": 1.0,
+        }
+    ]
 
 
 def test_exculpatory_context_requires_case_pair_and_lookback_window() -> None:
@@ -216,3 +254,31 @@ def test_aggregate_message_edges_keeps_counts_without_null_timestamp_lists() -> 
     assert aggregated[0]["message_ids"] == ["MISSING-TS", "MSG-1"]
     assert aggregated[0]["timestamped_message_ids"] == ["MSG-1"]
     assert aggregated[0]["timestamps"] == ["2026-07-29T09:00:00+00:00"]
+
+
+def test_neo4j_driver_uses_bounded_connection_timeouts(monkeypatch) -> None:
+    """A remote graph outage must not consume Render's request budget."""
+    calls: list[dict[str, Any]] = []
+
+    def fake_driver(uri: str, **kwargs: Any) -> object:
+        assert uri == "neo4j+s://example.databases.neo4j.io"
+        calls.append(kwargs)
+        return object()
+
+    monkeypatch.setenv("NEO4J_URI", "neo4j+s://example.databases.neo4j.io")
+    monkeypatch.setenv("NEO4J_USER", "neo4j")
+    monkeypatch.setenv("NEO4J_PASSWORD", "test-password")
+    monkeypatch.setattr(graph_db.GraphDatabase, "driver", fake_driver)
+    monkeypatch.setattr(graph_db, "_driver", None)
+    monkeypatch.setattr(graph_db, "_unavailable_until", 0.0)
+
+    graph_db.get_driver()
+
+    assert calls == [
+        {
+            "auth": ("neo4j", "test-password"),
+            "connection_timeout": 3.0,
+            "connection_acquisition_timeout": 3.0,
+            "max_transaction_retry_time": 0.0,
+        }
+    ]

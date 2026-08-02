@@ -104,9 +104,11 @@ def test_case_simulation_uses_groq_with_case_specific_evidence(monkeypatch) -> N
             )
 
     class FakeOpenAI:
-        def __init__(self, *, api_key: str, base_url: str) -> None:
+        def __init__(self, *, api_key: str, base_url: str, timeout: float, max_retries: int) -> None:
             assert api_key == "test-key"
             assert base_url == "https://api.groq.com/openai/v1"
+            assert timeout == 5.0
+            assert max_retries == 0
             self.chat = SimpleNamespace(completions=FakeCompletions())
 
     monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=FakeOpenAI))

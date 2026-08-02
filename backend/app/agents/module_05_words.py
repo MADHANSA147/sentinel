@@ -10,6 +10,7 @@ share no words but mean the same thing — embeddings catch this, keywords miss 
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Any
 
@@ -20,6 +21,13 @@ from chromadb.utils import embedding_functions
 _MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
 _COLLECTION_NAME = "sentinel_messages"
 _COERCIVE_THRESHOLD = 0.75  # cosine similarity threshold
+
+
+def semantic_embeddings_enabled() -> bool:
+    """Return whether the optional SentenceTransformer backend is enabled."""
+    return os.environ.get("ENABLE_SEMANTIC_EMBEDDINGS", "false").lower() in {
+        "1", "true", "yes",
+    }
 
 # Grooming / coercive language seed queries (half English, half code-mixed)
 GROOMING_QUERIES = [
@@ -73,10 +81,41 @@ _chroma_collection: chromadb.Collection | None = None
 
 
 def get_collection() -> chromadb.Collection:
+    """Return the cached semantic collection when the optional backend is enabled."""
     global _chroma_collection
+    if not semantic_embeddings_enabled():
+        raise RuntimeError("Semantic embeddings are disabled for this deployment.")
     if _chroma_collection is None:
         _chroma_collection = _get_chroma_collection()
     return _chroma_collection
+
+
+def preload_collection() -> None:
+    """Load the optional model once at startup, never on a pipeline request."""
+    if semantic_embeddings_enabled():
+        get_collection()
+
+
+def _fallback_coercive_matches(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """Produce auditable exact-language matches without an embedding model."""
+    matches: list[dict[str, Any]] = []
+    for message in state.get("raw_messages", []):
+        content = message.get("content")
+        if (
+            isinstance(content, str)
+            and not message.get("is_quarantined", False)
+            and _has_explicit_coercive_language(content)
+        ):
+            matches.append(
+                {
+                    "query": "explicit coercive-language rule",
+                    "message_id": str(message.get("message_id", "")),
+                    "content": content,
+                    "sender_id": message.get("sender_id"),
+                    "similarity": 1.0,
+                }
+            )
+    return matches
 
 
 def embed_messages(messages: list[dict], case_id: str = "default") -> None:
@@ -84,6 +123,8 @@ def embed_messages(messages: list[dict], case_id: str = "default") -> None:
     Chunk and embed all messages into ChromaDB.
     Call this after ingestion, before running Module 05.
     """
+    if not semantic_embeddings_enabled():
+        return
     try:
         col = get_collection()
     except Exception as exc:
@@ -122,11 +163,14 @@ def word_patterns(state: dict[str, Any]) -> dict[str, Any]:
         coercive_matches: list of match dicts with keys
             query, message_id, content, sender_id, similarity
     """
+    if not semantic_embeddings_enabled():
+        state["coercive_matches"] = _fallback_coercive_matches(state)
+        return state
     try:
         col = get_collection()
     except Exception as exc:
         print(f"[WARN] Word Patterns unavailable: {exc}")
-        state["coercive_matches"] = []
+        state["coercive_matches"] = _fallback_coercive_matches(state)
         return state
 
     case_id = str(state.get("case_id", "default"))

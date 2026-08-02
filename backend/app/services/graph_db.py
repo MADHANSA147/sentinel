@@ -6,11 +6,34 @@ Reads credentials from environment variables: NEO4J_URI, NEO4J_USER, NEO4J_PASSW
 from __future__ import annotations
 
 import os
+import time
 from typing import Any
 
 from neo4j import GraphDatabase, Driver
 
 _driver: Driver | None = None
+_CONNECTION_TIMEOUT_SECONDS = 3.0
+_QUERY_TIMEOUT_SECONDS = 5.0
+_RETRY_COOLDOWN_SECONDS = 30.0
+_unavailable_until = 0.0
+
+
+def _mark_unavailable() -> None:
+    """Avoid repeating a failed remote graph connection during one pipeline run."""
+    global _driver, _unavailable_until
+    _unavailable_until = time.monotonic() + _RETRY_COOLDOWN_SECONDS
+    if _driver is not None:
+        try:
+            _driver.close()
+        except Exception:
+            pass
+    _driver = None
+
+
+def _mark_available() -> None:
+    """Clear the connection circuit breaker after a successful graph operation."""
+    global _unavailable_until
+    _unavailable_until = 0.0
 
 
 def _aggregate_message_edges(edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -72,20 +95,33 @@ def _aggregate_message_edges(edges: list[dict[str, Any]]) -> list[dict[str, Any]
 def get_driver() -> Driver:
     """Return a singleton Neo4j driver; create one if not yet initialised."""
     global _driver
+    if time.monotonic() < _unavailable_until:
+        raise RuntimeError("Neo4j is temporarily unavailable; retry cooldown is active.")
     if _driver is None:
-        uri = os.environ["NEO4J_URI"]
-        user = os.environ["NEO4J_USER"]
-        password = os.environ["NEO4J_PASSWORD"]
-        _driver = GraphDatabase.driver(uri, auth=(user, password))
+        try:
+            uri = os.environ["NEO4J_URI"]
+            user = os.environ["NEO4J_USER"]
+            password = os.environ["NEO4J_PASSWORD"]
+            _driver = GraphDatabase.driver(
+                uri,
+                auth=(user, password),
+                connection_timeout=_CONNECTION_TIMEOUT_SECONDS,
+                connection_acquisition_timeout=_CONNECTION_TIMEOUT_SECONDS,
+                max_transaction_retry_time=0.0,
+            )
+        except Exception:
+            _mark_unavailable()
+            raise
     return _driver
 
 
 def close_driver() -> None:
     """Explicitly close the driver (call on app shutdown)."""
-    global _driver
+    global _driver, _unavailable_until
     if _driver is not None:
         _driver.close()
         _driver = None
+    _unavailable_until = 0.0
 
 
 def batch_load_graph(edges: list[dict[str, Any]], case_id: str = "default") -> None:
@@ -119,12 +155,18 @@ def batch_load_graph(edges: list[dict[str, Any]], case_id: str = "default") -> N
     REMOVE rel.message_id, rel.timestamp
     """
 
-    with driver.session() as session:
-        session.run(
-            "MATCH (p:Person {case_id: $case_id}) DETACH DELETE p",
-            case_id=case_id,
-        )
-        session.run(cypher, edges=tagged)
+    try:
+        with driver.session() as session:
+            session.run(
+                "MATCH (p:Person {case_id: $case_id}) DETACH DELETE p",
+                case_id=case_id,
+                timeout=_QUERY_TIMEOUT_SECONDS,
+            ).consume()
+            session.run(cypher, edges=tagged, timeout=_QUERY_TIMEOUT_SECONDS).consume()
+    except Exception:
+        _mark_unavailable()
+        raise
+    _mark_available()
 
 
 def write_person_properties(updates: list[dict[str, Any]], case_id: str = "default") -> None:
@@ -142,8 +184,19 @@ def write_person_properties(updates: list[dict[str, Any]], case_id: str = "defau
     MATCH (p:Person {id: u.id, case_id: $case_id})
     SET p += u
     """
-    with driver.session() as session:
-        session.run(cypher, updates=updates, case_id=case_id)
+    run_write(cypher, {"updates": updates, "case_id": case_id})
+
+
+def run_write(cypher: str, params: dict[str, Any] | None = None) -> None:
+    """Execute a bounded Cypher write and open the failure circuit on error."""
+    driver = get_driver()
+    try:
+        with driver.session() as session:
+            session.run(cypher, **(params or {}), timeout=_QUERY_TIMEOUT_SECONDS).consume()
+    except Exception:
+        _mark_unavailable()
+        raise
+    _mark_available()
 
 
 def run_query(cypher: str, params: dict[str, Any] | None = None) -> list[dict]:
@@ -152,9 +205,15 @@ def run_query(cypher: str, params: dict[str, Any] | None = None) -> list[dict]:
     """
     driver = get_driver()
     params = params or {}
-    with driver.session() as session:
-        result = session.run(cypher, **params)
-        return [dict(r) for r in result]
+    try:
+        with driver.session() as session:
+            result = session.run(cypher, **params, timeout=_QUERY_TIMEOUT_SECONDS)
+            records = [dict(r) for r in result]
+    except Exception:
+        _mark_unavailable()
+        raise
+    _mark_available()
+    return records
 
 
 def run_query_for_case(case_id: str, cypher: str, params: dict[str, Any] | None = None) -> list[dict]:
@@ -164,6 +223,12 @@ def run_query_for_case(case_id: str, cypher: str, params: dict[str, Any] | None 
     """
     driver = get_driver()
     params = {**(params or {}), "case_id": case_id}
-    with driver.session() as session:
-        result = session.run(cypher, **params)
-        return [dict(r) for r in result]
+    try:
+        with driver.session() as session:
+            result = session.run(cypher, **params, timeout=_QUERY_TIMEOUT_SECONDS)
+            records = [dict(r) for r in result]
+    except Exception:
+        _mark_unavailable()
+        raise
+    _mark_available()
+    return records

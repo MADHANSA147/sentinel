@@ -78,6 +78,22 @@ def test_all_datasets_produce_scoped_distinct_outputs() -> None:
     assert tags["U-304"] == "Bridge"
 
 
+def test_run_endpoint_preserves_response_contract_for_each_dataset() -> None:
+    for case_id in ("case-dataset1", "case-dataset2", "case-dataset3", "case-dataset4"):
+        response = asyncio.run(pipeline_api.run_case(case_id))
+
+        assert response["case_id"] == case_id
+        assert response["status"] == "completed"
+        assert set(response) == {
+            "case_id",
+            "status",
+            "persons_analysed",
+            "gap_alerts",
+            "theories",
+            "simulation",
+        }
+
+
 def test_hitl_rejection_recomputes_the_affected_person_score() -> None:
     _run_dashboard("case-dataset1")
     before = pipeline_api.get_case_state("case-dataset1")["risk_scores"]["U-101"]["score"]

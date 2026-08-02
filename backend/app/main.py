@@ -5,6 +5,8 @@ Registers all routers and wires startup/shutdown lifecycle.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
@@ -22,12 +24,21 @@ from app.api.dashboard import router as dashboard_router
 from app.api.export import router as export_router
 from app.api.hitl import router as hitl_router
 from app.services.graph_db import close_driver
+from app.agents.module_05_words import preload_collection, semantic_embeddings_enabled
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI lifespan: startup → yield → shutdown."""
     # Nothing to init eagerly — Neo4j driver is lazy
+    if semantic_embeddings_enabled():
+        try:
+            await asyncio.to_thread(preload_collection)
+            logger.info("Semantic embedding model preloaded.")
+        except Exception:
+            logger.exception("Semantic embedding preload failed; using rule fallback.")
     yield
     close_driver()
 

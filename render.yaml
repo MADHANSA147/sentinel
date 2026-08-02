@@ -14,5 +14,7 @@ services:
         sync: false
       - key: GROQ_API_KEY
         sync: false
+      - key: ENABLE_SEMANTIC_EMBEDDINGS
+        value: "false"
       - key: FRONTEND_URL
         value: https://sentinel-mvp.vercel.app
