@@ -19,7 +19,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.ingestion import router as ingestion_router
-from app.api.pipeline import router as pipeline_router
+from app.api.pipeline import debug_router, router as pipeline_router
 from app.api.dashboard import router as dashboard_router
 from app.api.export import router as export_router
 from app.api.hitl import router as hitl_router
@@ -71,6 +71,7 @@ app.add_middleware(
 # ── Routers ────────────────────────────────────────────────────────────────
 app.include_router(ingestion_router)
 app.include_router(pipeline_router)
+app.include_router(debug_router)
 app.include_router(dashboard_router)
 app.include_router(export_router)
 app.include_router(hitl_router)
