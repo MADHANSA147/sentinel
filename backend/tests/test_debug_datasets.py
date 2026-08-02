@@ -3,7 +3,8 @@
 import asyncio
 from pathlib import Path
 
-from app.api.pipeline import _CASE_TO_FILE, _DATA_DIR, debug_datasets
+from app.api.debug import debug_datasets
+from app.api.pipeline import _CASE_TO_FILE, _DATA_DIR
 
 
 def test_debug_datasets_reports_resolved_dataset_paths() -> None:
