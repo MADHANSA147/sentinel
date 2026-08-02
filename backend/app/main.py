@@ -18,7 +18,6 @@ load_dotenv(override=True)
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.debug import router as debug_router
 from app.api.ingestion import router as ingestion_router
 from app.api.pipeline import router as pipeline_router
 from app.api.dashboard import router as dashboard_router
@@ -72,7 +71,6 @@ app.add_middleware(
 # ── Routers ────────────────────────────────────────────────────────────────
 app.include_router(ingestion_router)
 app.include_router(pipeline_router)
-app.include_router(debug_router)
 app.include_router(dashboard_router)
 app.include_router(export_router)
 app.include_router(hitl_router)
