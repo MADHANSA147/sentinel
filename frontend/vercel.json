@@ -3,8 +3,5 @@
   "outputDirectory": "dist",
   "installCommand": "npm install",
   "framework": "vite",
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }],
-  "env": {
-    "VITE_API_URL": "https://sentinel-backend.onrender.com"
-  }
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
 }
