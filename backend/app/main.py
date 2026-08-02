@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """FastAPI lifespan: startup → yield → shutdown."""
     # Nothing to init eagerly — Neo4j driver is lazy
+    logger.info("Allowed CORS origins:\n- %s", "\n- ".join(allowed_origins))
     if semantic_embeddings_enabled():
         try:
             await asyncio.to_thread(preload_collection)
@@ -54,18 +55,14 @@ app = FastAPI(
 )
 
 # ── CORS ──────────────────────────────────────────────────────────────────
-frontend_origin = os.environ.get("FRONTEND_URL", "http://localhost:5173")
+allowed_origins = [
+    origin.strip()
+    for origin in os.getenv("FRONTEND_URL", "http://localhost:5173").split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    # Vite may be opened through either hostname during local development.
-    # These are distinct browser origins, so both must be explicitly allowed.
-    allow_origins=[
-        frontend_origin,
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
